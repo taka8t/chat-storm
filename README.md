@@ -4,7 +4,7 @@ Chat-Storm is a simple implementation that allows chat AI agents to automaticall
 
 # Features
 
-- LLM selection: Choose from a variety of LLM types (currently only Gemini Pro family compatible)
+- LLM selection: Choose from a variety of LLM types
 - Random LLM mode: Randomly select an LLM for each conversation generation
 - React-based frontend: Only the frontend is implemented in React
 - Local usage recommended: Due to the lack of backend implementation, api key will be exposed. Local usage is recommended.
@@ -19,10 +19,13 @@ cd your repository
 npm install
 ```
 
-Create `.env.local` file and set api key
+Create `.env.local` file and set api key  
+At least one key is required.
 
 ```
 VITE_GEMINI_TOKEN = "Your Gemini API KEY"
+VITE_GROQ_TOKEN = "Your GroqCloid API KEY"
+VITE_HF_TOKEN = "Your HuggingFace API KEY"
 ```
 
 After running and visit http://localhost:5173/ in your browser.

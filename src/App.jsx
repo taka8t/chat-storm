@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { Groq } from "groq-sdk";
 import Markdown from 'react-markdown';
 import './App.css'
 
@@ -14,7 +15,13 @@ function ModelSelector({model_name, onChange}) {
             <option value="gemini-1.0-pro-latest">Gemini 1.0 pro</option>
             <option value="gemini-1.5-flash-latest">Gemini 1.5 Flash</option>
             <option value="gemini-1.5-pro-latest">Gemini 1.5 pro</option>
+            <option value="groq_llama3-8b-8192">llama3-8b-8192(Groq)</option>
+            <option value="groq_llama3-70b-8192">llama3-70b-8192(Groq)</option>
+            <option value="groq_mixtral-8x7b-32768">mixtral-8x7b-32768(Groq)</option>
+            <option value="groq_gemma-7b-it">gemma-7b-it(Groq)</option>
+            <option value="huggingface_meta-llama/Meta-Llama-3-8B-Instruct">Meta-Llama-3-8B(HF experimental)</option>
             <option value="random">Random</option>
+            <option value="random2">Random2(without Gemini 1.5 pro)</option>
         </select>
     </label>
   );
@@ -62,7 +69,7 @@ function RequestConfig({config, submit}) {
     <div>
        <form method="post" onSubmit={submit}>
        <label>
-            Request Interval (sec):
+            Request Interval (msec):
             <input
               name="interval"
               defaultValue={config.interval}
@@ -90,6 +97,19 @@ function Chat({history}) {
   );
 }
 
+async function hf_query(model, data, token) {
+	const response = await fetch(
+		`https://api-inference.huggingface.co/models/${model}`,
+		{
+			headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+			method: "POST",
+			body: JSON.stringify(data),
+		}
+	);
+	const result = await response.json();
+	return result;
+}
+
 function App() {
   const [modelName, setmodelName] = useState("gemini-1.0-pro-latest");
   const [history, setHistory] = useState([]);
@@ -98,7 +118,7 @@ function App() {
     interval: 30000,
     is_running: false,
     init_prompt: "We are now free to control the laws of physics. What will happen to the universe?",
-    prefix_prompt: "Please give me your opinion on the above.\n >> {your opinion}"
+    prefix_prompt: "Please further the discussion with your opinion based on the above.\n>> <your opinion>"
   });
   
   let models = [];
@@ -107,12 +127,30 @@ function App() {
   if (import.meta.env.VITE_GEMINI_TOKEN) {
     geminiAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_TOKEN)
     gemini_generationConfig = {
-      maxOutputTokens: 500,
+      maxOutputTokens: 1024,
       temperature: 0.9,
       topP: 0.95,
-      topK: 1,
+      topK: 3,
     };
     models = [...models, "gemini-1.0-pro-latest", "gemini-1.5-flash-latest", "gemini-1.5-pro-latest"];
+  }
+
+  let groqAI;
+  let groq_generationconfig;
+  if (import.meta.env.VITE_GROQ_TOKEN) {
+    groqAI = new Groq({apiKey: import.meta.env.VITE_GROQ_TOKEN, dangerouslyAllowBrowser: true});
+    groq_generationconfig = {
+      max_tokens: 1024,
+      temperature: 0.9,
+      top_p: 0.95,
+    };
+    models = [...models, "groq_llama3-8b-8192", "groq_llama3-70b-8192", "groq_mixtral-8x7b-32768", "groq_gemma-7b-it"];
+  }
+
+  let hf_token;
+  if (import.meta.env.VITE_HF_TOKEN) {
+    hf_token = import.meta.env.VITE_HF_TOKEN;
+    // models = [...models, "huggingface_meta-llama/Meta-Llama-3-8B-Instruct"];
   }
 
   if (models.length == 0) {
@@ -130,13 +168,16 @@ function App() {
     else {
       msg += config.init_prompt 
           + "\n\n" 
-          + history.slice(-3).map((data) => data.text).join("\n\n") 
+          + history.slice(-10).map((data) => data.text).join("\n\n") 
           + "\n\n" 
           + config.prefix_prompt;
     }
     console.log(msg);
     let resp_text = "";
-    let next_model = (modelName == "random") ? models[Math.floor(Math.random() * models.length)] : modelName;
+    let next_model = 
+      (modelName == "random") ? models[Math.floor(Math.random() * models.length)] 
+      : (modelName == "random2") ? models.filter(m => !m.includes("gemini-1.5-pro"))[Math.floor(Math.random() * (models.length-1))]
+      : modelName;
     if (next_model.includes("gemini")) {
       const model = geminiAI.getGenerativeModel({model: next_model, gemini_generationConfig});
       await model.generateContent(msg).then(result => {
@@ -145,18 +186,51 @@ function App() {
         console.error('error: ', err);
         return;
       });
-      // resp_text = next_model + " text" + `${next_model}_${new Date().getTime()}`;
+    }
+    else if (next_model.includes("groq_")) {
+      next_model = next_model.replace("groq_", "");
+      await groqAI.chat.completions.create ({
+        messages: [
+          {
+            role: "user",
+            content: msg
+          }
+        ],
+        model: next_model,
+        ...groq_generationconfig
+      }).then(result => {
+        resp_text = result.choices[0]?.message?.content;
+      }).catch(err => {
+        console.error('error: ', err);
+        return;
+      });
+    }
+    else if (next_model.includes("huggingface_")) {
+      next_model = next_model.replace("huggingface_", "");
+      await hf_query(next_model, {"inputs": msg}, hf_token).then(result => {
+        resp_text = result[0].generated_text;
+      }).catch(err => {
+        console.error('error: ', err);
+        return;
+      });
     }
     else {
       // unimplemented
     }
-    setHistory((prev) => 
-      [...prev, {
-        id: `${next_model}_${new Date().getTime()}`,
-        model: next_model,
-        text: resp_text
-      }].slice(-100)
-    );
+    if (resp_text == ""){
+      setHistory((prev) => 
+        [...prev].slice(-100)
+      );
+    }
+    else {
+      setHistory((prev) => 
+        [...prev, {
+          id: `${next_model}_${new Date().getTime()}`,
+          model: next_model,
+          text: resp_text
+        }].slice(-100)
+      );
+    }
     setConfig((prev) => {return {...prev, interval: prev.default_interval};});
   }
 
